@@ -136,14 +136,13 @@ public class OthelloAgent
 
                 // Recompute what that other player will be allowed to do.
                 g.calculateFrontiers();
-                
 
                 // Turn that updated Game back into a view for the child
                 Game.GameView passView = g.getView();
 
-                // Check if the other player have any leagl moves
+                // Check if the other player have any legal moves
                 java.util.Set<Coordinate> otherPlayerFrontier = passView.getFrontier(otherPlayer);
-                if(otherPlayerFrontier.isEmpty()){
+                if (otherPlayerFrontier.isEmpty()) {
                     // No move for the opponent
                     return children; // Return the empty
                 }
