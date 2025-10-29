@@ -145,9 +145,10 @@ public class OthelloAgent
                 java.util.Set<Coordinate> otherPlayerFrontier = passView.getFrontier(otherPlayer);
                 if(otherPlayerFrontier.isEmpty()){
                     // No move for the opponent
-                    return children;
+                    return children; // Return the empty
                 }
 
+                // Another player has the move.
                 OthelloNode passNode = new OthelloNode(
                         this.getMaxPlayerType(),
                         passView,
