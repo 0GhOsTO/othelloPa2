@@ -86,10 +86,9 @@ public class OthelloAgent
 
             Game.GameView view = this.getGameView();
 
-            // If this node is terminal, it has no children.
-            if (this.isTerminal() || view.isGameOver()) {
-                return children; // empty
-            }
+            // Do not short-circuit here; we still need to generate a pass child
+            // when the current player has no legal moves. Terminal detection
+            // (both players with no legal moves) will be handled below.
 
             PlayerType currentPlayer = view.getCurrentPlayerType();
             PlayerType otherPlayer = view.getOtherPlayerType();
