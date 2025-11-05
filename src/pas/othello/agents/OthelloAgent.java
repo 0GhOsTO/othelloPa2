@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Random;
 
 // JAVA PROJECT IMPORTS
-import edu.bu.pas.othello.agents.Agent;
 import edu.bu.pas.othello.agents.TimedTreeSearchAgent;
 import edu.bu.pas.othello.game.Game.GameView;
 import edu.bu.pas.othello.game.Game;
@@ -16,6 +15,9 @@ import edu.bu.pas.othello.utils.Coordinate;
 
 public class OthelloAgent
         extends TimedTreeSearchAgent {
+
+    // Transposition table for memoization
+    private final java.util.Map<String, Double> transpositionTable = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static class OthelloNode
             extends Node {
@@ -131,6 +133,9 @@ public class OthelloAgent
                 // the case where the current player has NO legal moves. Pass
                 Game g = new Game(view);
 
+                // Increment turn number for the pass move
+                g.setTurnNumber(g.getTurnNumber() + 1);
+
                 // Don't apply a move. Just hand the turn to the other player.
                 g.setCurrentPlayerType(otherPlayer);
 
@@ -141,7 +146,7 @@ public class OthelloAgent
                 Game.GameView passView = g.getView();
 
                 // Always create a pass node when current player has no moves
-                // The game will handle termination logic elsewhere
+                // The game termination logic should be handled elsewhere (isTerminal method)
                 OthelloNode passNode = new OthelloNode(
                         this.getMaxPlayerType(),
                         passView,
@@ -180,13 +185,44 @@ public class OthelloAgent
 
     @Override
     public Node treeSearch(Node n) {
-        // Use minimax with alpha-beta pruning
-        // Maximum search depth - adjust based on performance requirements
-        int maxDepth = 4;
+        // Clear transposition table for new search (to prevent stale data)
+        transpositionTable.clear();
         
-        // Start the minimax search
-        MinimaxResult result = minimax(n, maxDepth, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true);
+        // Use minimax with alpha-beta pruning
+        // Adaptive depth based on game phase and available time
+        int maxDepth = calculateSearchDepth(n);
+        
+        // Start the minimax search with time tracking
+        long startTime = System.currentTimeMillis();
+        MinimaxResult result = minimax(n, maxDepth, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true, startTime);
         return result.bestNode;
+    }
+    
+    private int calculateSearchDepth(Node node) {
+        GameView view = node.getGameView();
+        PlayerType[][] cells = view.getCells();
+        
+        // Count total pieces on board
+        int pieceCount = 0;
+        for (int i = 0; i < cells.length; i++) {
+            for (int j = 0; j < cells[i].length; j++) {
+                if (cells[i][j] != null) {
+                    pieceCount++;
+                }
+            }
+        }
+        
+        // Adaptive depth based on game phase
+        if (pieceCount <= 10) {
+            // Early game: fewer pieces, more branching factor, use shallow search
+            return 3;
+        } else if (pieceCount <= 40) {
+            // Mid game: balanced approach
+            return 4;
+        } else {
+            // End game: fewer legal moves, can search deeper
+            return 6;
+        }
     }
     
     // Helper class to return both utility and best node from minimax
@@ -200,8 +236,42 @@ public class OthelloAgent
         }
     }
     
-    // Minimax with alpha-beta pruning
-    private MinimaxResult minimax(Node node, int depth, double alpha, double beta, boolean maximizingPlayer) {
+    // Generate a unique hash for the game state
+    private String getBoardHash(GameView view) {
+        PlayerType[][] cells = view.getCells();
+        StringBuilder sb = new StringBuilder();
+        sb.append(view.getCurrentPlayerType().toString()).append("|");
+        
+        for (int i = 0; i < cells.length; i++) {
+            for (int j = 0; j < cells[i].length; j++) {
+                if (cells[i][j] == null) {
+                    sb.append("_");
+                } else {
+                    sb.append(cells[i][j] == PlayerType.BLACK ? "B" : "W");
+                }
+            }
+        }
+        return sb.toString();
+    }
+    
+    // Minimax with alpha-beta pruning and memoization
+    private MinimaxResult minimax(Node node, int depth, double alpha, double beta, boolean maximizingPlayer, long startTime) {
+        // Time cutoff to prevent infinite loops (80% of max thinking time)
+        long maxTime = (long)(this.getMaxThinkingTimeInMS() * 0.8);
+        if (System.currentTimeMillis() - startTime > maxTime) {
+            // Time cutoff reached, return heuristic evaluation
+            double utility = src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
+            return new MinimaxResult(utility, node);
+        }
+        String boardHash = getBoardHash(node.getGameView());
+        String memoKey = boardHash + "|" + depth + "|" + maximizingPlayer;
+        
+        // Check transposition table first
+        if (transpositionTable.containsKey(memoKey)) {
+            double cachedValue = transpositionTable.get(memoKey);
+            return new MinimaxResult(cachedValue, node);
+        }
+        
         // Base case: terminal node or maximum depth reached
         if (node.isTerminal() || depth == 0) {
             double utility;
@@ -211,6 +281,9 @@ public class OthelloAgent
                 // Use heuristic evaluation
                 utility = src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
             }
+            
+            // Store in transposition table
+            transpositionTable.put(memoKey, utility);
             return new MinimaxResult(utility, node);
         }
         
@@ -232,7 +305,7 @@ public class OthelloAgent
             double maxEval = Double.NEGATIVE_INFINITY;
             
             for (Node child : children) {
-                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, false);
+                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, false, startTime);
                 
                 if (eval.utility > maxEval) {
                     maxEval = eval.utility;
@@ -245,12 +318,14 @@ public class OthelloAgent
                 }
             }
             
+            // Store result in transposition table
+            transpositionTable.put(memoKey, maxEval);
             return new MinimaxResult(maxEval, bestChild);
         } else {
             double minEval = Double.POSITIVE_INFINITY;
             
             for (Node child : children) {
-                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, true);
+                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, true, startTime);
                 
                 if (eval.utility < minEval) {
                     minEval = eval.utility;
@@ -263,6 +338,8 @@ public class OthelloAgent
                 }
             }
             
+            // Store result in transposition table
+            transpositionTable.put(memoKey, minEval);
             return new MinimaxResult(minEval, bestChild);
         }
     }
