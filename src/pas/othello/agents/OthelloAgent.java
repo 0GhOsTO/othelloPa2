@@ -140,14 +140,8 @@ public class OthelloAgent
                 // Turn that updated Game back into a view for the child
                 Game.GameView passView = g.getView();
 
-                // Check if the other player have any legal moves
-                java.util.Set<Coordinate> otherPlayerFrontier = passView.getFrontier(otherPlayer);
-                if (otherPlayerFrontier.isEmpty()) {
-                    // No move for the opponent
-                    return children; // Return the empty
-                }
-
-                // Another player has the move.
+                // Always create a pass node when current player has no moves
+                // The game will handle termination logic elsewhere
                 OthelloNode passNode = new OthelloNode(
                         this.getMaxPlayerType(),
                         passView,
@@ -186,8 +180,91 @@ public class OthelloAgent
 
     @Override
     public Node treeSearch(Node n) {
-        // TODO: complete me!
-        return null;
+        // Use minimax with alpha-beta pruning
+        // Maximum search depth - adjust based on performance requirements
+        int maxDepth = 4;
+        
+        // Start the minimax search
+        MinimaxResult result = minimax(n, maxDepth, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true);
+        return result.bestNode;
+    }
+    
+    // Helper class to return both utility and best node from minimax
+    private static class MinimaxResult {
+        public final double utility;
+        public final Node bestNode;
+        
+        public MinimaxResult(double utility, Node bestNode) {
+            this.utility = utility;
+            this.bestNode = bestNode;
+        }
+    }
+    
+    // Minimax with alpha-beta pruning
+    private MinimaxResult minimax(Node node, int depth, double alpha, double beta, boolean maximizingPlayer) {
+        // Base case: terminal node or maximum depth reached
+        if (node.isTerminal() || depth == 0) {
+            double utility;
+            if (node.isTerminal()) {
+                utility = node.getTerminalUtility();
+            } else {
+                // Use heuristic evaluation
+                utility = src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
+            }
+            return new MinimaxResult(utility, node);
+        }
+        
+        List<Node> children = node.getChildren();
+        
+        // If no children (shouldn't happen with proper getChildren implementation)
+        if (children.isEmpty()) {
+            double utility = node.isTerminal() ? node.getTerminalUtility() 
+                : src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
+            return new MinimaxResult(utility, node);
+        }
+        
+        // Order children for better alpha-beta pruning
+        children = src.pas.othello.ordering.MoveOrderer.orderChildren(children);
+        
+        Node bestChild = children.get(0);
+        
+        if (maximizingPlayer) {
+            double maxEval = Double.NEGATIVE_INFINITY;
+            
+            for (Node child : children) {
+                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, false);
+                
+                if (eval.utility > maxEval) {
+                    maxEval = eval.utility;
+                    bestChild = child;
+                }
+                
+                alpha = Math.max(alpha, eval.utility);
+                if (beta <= alpha) {
+                    break; // Beta cutoff
+                }
+            }
+            
+            return new MinimaxResult(maxEval, bestChild);
+        } else {
+            double minEval = Double.POSITIVE_INFINITY;
+            
+            for (Node child : children) {
+                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, true);
+                
+                if (eval.utility < minEval) {
+                    minEval = eval.utility;
+                    bestChild = child;
+                }
+                
+                beta = Math.min(beta, eval.utility);
+                if (beta <= alpha) {
+                    break; // Alpha cutoff
+                }
+            }
+            
+            return new MinimaxResult(minEval, bestChild);
+        }
     }
 
     @Override
@@ -202,8 +279,8 @@ public class OthelloAgent
         // call tree search
         Node moveNode = this.treeSearch(node);
 
-        // return the move inside that node
-        return moveNode.getLastMove();
+        // return the move inside that node (null check to prevent NPE)
+        return moveNode != null ? moveNode.getLastMove() : null;
     }
 
     @Override
