@@ -20,61 +20,76 @@ public class Heuristics
         PlayerType minPlayer = (maxPlayer == view.getCurrentPlayerType()) ? view.getOtherPlayerType()
                 : view.getCurrentPlayerType();
 
-        // Count my pieces vs opponent pieces
-        // Early game, it's not that important
-        // Late game, it's very important
-        double pieceScore = calcPieceScore(view, maxPlayer, minPlayer);
-
-        // Corner Control (4 corners)
+        // Determine game phase for adaptive strategy
+        int totalPieces = countTotalPieces(view.getCells());
+        
+        // Corner Control (4 corners) - MOST IMPORTANT
         // Taking corners that are 0,0, 0,7, 7,0, 7,7 is very important
         double cornerScore = calcCornerScore(view, maxPlayer, minPlayer);
 
+        // Corner Adjacency Penalty; avoiding putting it next to the empty corner
+        double cornerAdjacentPenalty = calcCornerAdjacentPenalty(view, maxPlayer, minPlayer);
+
         // Edge Stability (Things at the edge can not be flipped)
-        // Pieces on the edge are unlikeley to be flipped
+        // Pieces on the edge are unlikely to be flipped
         double edgeScore = calEdgeScore(view, maxPlayer, minPlayer);
 
-        // Possible moves (# of possible moves vs me and opponent)
-        // More possible moves allows more options and flexibility.
-        double chanceScore = calcChanceScore(view, maxPlayer, minPlayer);
+        // Mobility - Possible moves (# of possible moves vs me and opponent)
+        // More possible moves allows more options and flexibility
+        double mobilityScore = calcMobilityScore(view, maxPlayer, minPlayer, totalPieces);
 
-        // Positional Weighting
-        // Avoid the corners adjacent the edges in the early game.
+        // Early: prefer FEWER pieces (opponent has less mobility)
+        // Late: prefer MORE pieces (that's how you win!)
+        double pieceScore = calcAdaptivePieceScore(view, maxPlayer, minPlayer, totalPieces);
+
+        // Take a static point if the board is currently in good positions or in the bad positions. 
         double positionalScore = calcPositionalScore(view, maxPlayer, minPlayer);
 
-        // Stability Score - Count stable disks that cannot be flipped
-        double stabilityScore = calcStabilityScore(view, maxPlayer, minPlayer);
+        // Note: Stability is already captured by corner and edge scores
+        // Interior pieces are rarely truly stable in Othello
 
-        // Piece Differential in Endgame - Heavy weight on piece count in final moves
-        double pieceDifferentialScore = calcPieceDifferentialScore(view, maxPlayer, minPlayer);
+        // Try to make the last move at the final stage. 
+        double parityScore = calcParityScore(view, maxPlayer, totalPieces);
 
-        // Central Control - Control of the central 4x4 area
-        double centralControlScore = calcCentralControlScore(view, maxPlayer, minPlayer);
+        // Potential Mobility; square adjacent to next place. 
+        double potentialMobilityScore = calcPotentialMobilityScore(view, maxPlayer, minPlayer, totalPieces);
 
         // We need to weight it differently based on game phase
         // Return the value between -1.0 and 1.0
-        double totalScore = pieceScore + cornerScore + edgeScore + chanceScore + positionalScore +
-                stabilityScore + pieceDifferentialScore + centralControlScore;
+        double totalScore = cornerScore + cornerAdjacentPenalty + edgeScore + mobilityScore + 
+                           pieceScore + positionalScore + parityScore + 
+                           potentialMobilityScore;
 
         // Clamp the result to [-1.0, 1.0] to match terminal utility range
         return Math.max(-1.0, Math.min(1.0, totalScore));
     }
 
-    private static double calcPieceScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
+    // Helper to count total pieces on board
+    private static int countTotalPieces(PlayerType[][] cells) {
+        int count = 0;
+        for (int i = 0; i < cells.length; i++) {
+            for (int j = 0; j < cells[i].length; j++) {
+                if (cells[i][j] != null) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    private static double calcAdaptivePieceScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer, int totalPieces) {
         PlayerType[][] cells = view.getCells();
         int maxCnt = 0;
         int minCnt = 0;
-        int totPieces = 0;
 
-        // Count pieces everytime
+        // Count pieces
         for (int i = 0; i < cells.length; i++) {
             for (int j = 0; j < cells[i].length; j++) {
                 PlayerType owner = cells[i][j];
                 if (owner == maxPlayer) {
                     maxCnt++;
-                    totPieces++;
                 } else if (owner == minPlayer) {
                     minCnt++;
-                    totPieces++;
                 }
             }
         }
@@ -83,12 +98,164 @@ public class Heuristics
             return 0.0;
         }
 
-        // In early game (< 32 pieces), piece count is less important
-        // In late game (>= 32 pieces), piece count becomes more important
-        double weight = (totPieces < 32) ? 0.1 : 0.3;
-
         double ratio = (double) (maxCnt - minCnt) / (maxCnt + minCnt);
+        
+        // Weighting based on the current game phase. 
+        double weight;
+        if (totalPieces <= 16) {
+            // Start with the fewer amount of the pieces.
+            weight = -0.05;
+        } else if (totalPieces <= 48) {
+            // Piece do not matter
+            weight = 0.05;
+        } else {
+            // Piece count is extremely important at the end. 
+            weight = 0.5;
+        }
+        
         return weight * ratio;
+    }
+
+    //If you are adjacent to the empty corner, you are in trouble since opponent will flip you and you will not be able to revert it. 
+    private static double calcCornerAdjacentPenalty(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
+        PlayerType[][] cells = view.getCells();
+        int boardSize = cells.length;
+        double maxPenalty = 0.0;
+        double minPenalty = 0.0;
+
+        // Check all 4 corners and their adjacent squares
+        int[][] corners = {{0, 0}, {0, boardSize-1}, {boardSize-1, 0}, {boardSize-1, boardSize-1}};
+        
+        for (int[] corner : corners) {
+            int cr = corner[0];
+            int cc = corner[1];
+            
+            // If corner is EMPTY, penalize adjacent squares heavily
+            if (cells[cr][cc] == null) {
+                // Diagonal to the corner. VERY BAD
+                int xr = (cr == 0) ? 1 : boardSize - 2;
+                int xc = (cc == 0) ? 1 : boardSize - 2;
+                if (cells[xr][xc] == maxPlayer) {
+                    maxPenalty += 0.15; // Heavy penalty for X-square next to empty corner
+                } else if (cells[xr][xc] == minPlayer) {
+                    minPenalty += 0.15;
+                }
+                
+                // Orthogonal to the corner. ALSO BAD
+                int c1r = (cr == 0) ? 1 : boardSize - 2;
+                int c2c = (cc == 0) ? 1 : boardSize - 2;
+                if (cells[c1r][cc] == maxPlayer) {
+                    maxPenalty += 0.10;
+                } else if (cells[c1r][cc] == minPlayer) {
+                    minPenalty += 0.10;
+                }
+                if (cells[cr][c2c] == maxPlayer) {
+                    maxPenalty += 0.10;
+                } else if (cells[cr][c2c] == minPlayer) {
+                    minPenalty += 0.10;
+                }
+            }
+        }
+        
+        // Return negative of penalty difference (we want to AVOID penalties)
+        return -(maxPenalty - minPenalty);
+    }
+
+    private static double calcMobilityScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer, int totalPieces) {
+        // Get number of legal moves for each player
+        Set<Coordinate> maxMoves = view.getFrontier(maxPlayer);
+        Set<Coordinate> minMoves = view.getFrontier(minPlayer);
+
+        int maxMoveCount = maxMoves.size();
+        int minMoveCount = minMoves.size();
+
+        if (maxMoveCount + minMoveCount == 0) {
+            return 0.0;
+        }
+
+        double ratio = (double) (maxMoveCount - minMoveCount) / (maxMoveCount + minMoveCount);
+        
+        // Mobility is MORE important in opening/midgame, LESS important in endgame
+        double weight;
+        if (totalPieces <= 30) {
+            weight = 0.20; // Very important early
+        } else if (totalPieces <= 50) {
+            weight = 0.15; // Still important mid-game
+        } else {
+            weight = 0.05; // Less important in endgame
+        }
+        
+        return weight * ratio;
+    }
+
+    // Trying to make the last move in the end session of the game. 
+    private static double calcParityScore(GameView view, PlayerType maxPlayer, int totalPieces) {
+        int emptySquares = 64 - totalPieces;
+        
+        // Only matters in late game
+        if (totalPieces < 50) {
+            return 0.0;
+        }
+        
+        // In Othello, having the last move is advantageous in endgame
+        // If ODD number of empty squares remain, the player to move now gets the last move
+        // If EVEN number remain, the opponent gets the last move
+        PlayerType currentPlayer = view.getCurrentPlayerType();
+        boolean maxPlayerToMove = (currentPlayer == maxPlayer);
+        
+        if (emptySquares % 2 == 1) {
+            // Odd squares: player to move now gets last move
+            return maxPlayerToMove ? 0.02 : -0.02;
+        } else {
+            // Even squares: opponent gets last move
+            return maxPlayerToMove ? -0.02 : 0.02;
+        }
+    }
+
+    // Counting the empty spaces adjacent to the enemy's pieces.
+    private static double calcPotentialMobilityScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer, int totalPieces) {
+        // Only relevant in opening/midgame
+        if (totalPieces > 48) {
+            return 0.0;
+        }
+        
+        PlayerType[][] cells = view.getCells();
+        int boardSize = cells.length;
+        int maxPotential = 0;
+        int minPotential = 0;
+
+        // Count empty squares adjacent to each player's pieces
+        for (int i = 0; i < boardSize; i++) {
+            for (int j = 0; j < boardSize; j++) {
+                if (cells[i][j] == null) {
+                    // This square is empty
+                    boolean adjacentToMax = false;
+                    boolean adjacentToMin = false;
+                    
+                    for (int di = -1; di <= 1; di++) {
+                        for (int dj = -1; dj <= 1; dj++) {
+                            if (di == 0 && dj == 0) continue;
+                            int ni = i + di;
+                            int nj = j + dj;
+                            if (ni >= 0 && ni < boardSize && nj >= 0 && nj < boardSize) {
+                                if (cells[ni][nj] == maxPlayer) adjacentToMax = true;
+                                if (cells[ni][nj] == minPlayer) adjacentToMin = true;
+                            }
+                        }
+                    }
+                    
+                    if (adjacentToMax) maxPotential++;
+                    if (adjacentToMin) minPotential++;
+                }
+            }
+        }
+
+        if (maxPotential + minPotential == 0) {
+            return 0.0;
+        }
+
+        double ratio = (double) (maxPotential - minPotential) / (maxPotential + minPotential);
+        return 0.08 * ratio;
     }
 
     private static double calcCornerScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
@@ -157,39 +324,22 @@ public class Heuristics
         return 0.2 * ratio;
     }
 
-    private static double calcChanceScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
-        // Get number of legal moves for each player
-        Set<Coordinate> maxMoves = view.getFrontier(maxPlayer);
-        Set<Coordinate> minMoves = view.getFrontier(minPlayer);
-
-        int maxMoveCount = maxMoves.size();
-        int minMoveCount = minMoves.size();
-
-        if (maxMoveCount + minMoveCount == 0) {
-            return 0.0;
-        }
-
-        // Mobility is important - having more moves gives flexibility
-        double ratio = (double) (maxMoveCount - minMoveCount) / (maxMoveCount + minMoveCount);
-        return 0.15 * ratio;
-    }
-
     private static double calcPositionalScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
         PlayerType[][] cells = view.getCells();
         int maxPositionalScore = 0;
         int minPositionalScore = 0;
 
         // Position weights matrix (higher is better)
-        // Corners are best, edges are good, avoid spots next to corners
+        // Focus on interior and near-edge positions, corners/edges handled separately
         int[][] weights = {
-                { 100, -20, 10, 5, 5, 10, -20, 100 },
+                { 0, -20, 10, 5, 5, 10, -20, 0 },      // Set corners to 0 (counted elsewhere)
                 { -20, -40, -5, -5, -5, -5, -40, -20 },
                 { 10, -5, 5, 1, 1, 5, -5, 10 },
                 { 5, -5, 1, 1, 1, 1, -5, 5 },
                 { 5, -5, 1, 1, 1, 1, -5, 5 },
                 { 10, -5, 5, 1, 1, 5, -5, 10 },
                 { -20, -40, -5, -5, -5, -5, -40, -20 },
-                { 100, -20, 10, 5, 5, 10, -20, 100 }
+                { 0, -20, 10, 5, 5, 10, -20, 0 }       // Set corners to 0 (counted elsewhere)
         };
 
         for (int i = 0; i < cells.length; i++) {
@@ -204,166 +354,13 @@ public class Heuristics
         }
 
         // Normalize the positional score
-        int maxPossibleScore = 64 * 100; // If all pieces were in corners
+        int maxPossibleScore = 64 * 40;
         if (maxPositionalScore == 0 && minPositionalScore == 0) {
             return 0.0;
         }
 
         double ratio = (double) (maxPositionalScore - minPositionalScore) / (2.0 * maxPossibleScore);
-        return 0.1 * ratio; // Lower weight as it's less critical than corners/edges
-    }
-
-    // Count the stable pieces of the plays.
-    private static double calcStabilityScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
-        PlayerType[][] cells = view.getCells();
-        int maxStable = 0;
-        int minStable = 0;
-
-        for (int i = 0; i < cells.length; i++) {
-            for (int j = 0; j < cells[i].length; j++) {
-                PlayerType owner = cells[i][j];
-                if (owner == null)
-                    continue;
-
-                // A piece is stable if it's in a corner or on an edge with no empty spaces to
-                // flip through
-                boolean isStable = isStablePiece(cells, i, j, owner);
-
-                if (isStable) {
-                    if (owner == maxPlayer) {
-                        maxStable++;
-                    } else if (owner == minPlayer) {
-                        minStable++;
-                    }
-                }
-            }
-        }
-
-        if (maxStable + minStable == 0)
-            return 0.0;
-
-        double ratio = (double) (maxStable - minStable) / (maxStable + minStable);
-        return 0.25 * ratio; // It is quite important to have the stable pieces.
-    }
-
-    // Helper method to check if a piece is stable
-    private static boolean isStablePiece(PlayerType[][] cells, int row, int col, PlayerType player) {
-        int boardSize = cells.length;
-
-        // Corner pieces are always stable: Things are locked in at the corner
-        if ((row == 0 && col == 0) || (row == 0 && col == boardSize - 1) ||
-                (row == boardSize - 1 && col == 0) || (row == boardSize - 1 && col == boardSize - 1)) {
-            return true;
-        }
-
-        // Another check of the edge pieces.
-        // Edge pieces are stable if there are no gaps in the line to the corner
-        if (row == 0 || row == boardSize - 1 || col == 0 || col == boardSize - 1) {
-            return isEdgeStable(cells, row, col, player);
-        }
-
-        return false; // Interior pieces are rarely truly stable in simple analysis
-    }
-
-    // Helper to check edge stability
-    private static boolean isEdgeStable(PlayerType[][] cells, int row, int col, PlayerType player) {
-        int boardSize = cells.length;
-
-        // Check if this edge piece has a solid line to at least one corner
-        if (row == 0) { // Top edge
-            return (checkLineToCorner(cells, row, col, 0, -1, player) || // Left to corner
-                    checkLineToCorner(cells, row, col, 0, 1, player)); // Right to corner
-        } else if (row == boardSize - 1) { // Bottom edge
-            return (checkLineToCorner(cells, row, col, 0, -1, player) ||
-                    checkLineToCorner(cells, row, col, 0, 1, player));
-        } else if (col == 0) { // Left edge
-            return (checkLineToCorner(cells, row, col, -1, 0, player) ||
-                    checkLineToCorner(cells, row, col, 1, 0, player));
-        } else if (col == boardSize - 1) { // Right edge
-            return (checkLineToCorner(cells, row, col, -1, 0, player) ||
-                    checkLineToCorner(cells, row, col, 1, 0, player));
-        }
-
-        return false;
-    }
-
-    // Helper to check solid line to corner
-    private static boolean checkLineToCorner(PlayerType[][] cells, int row, int col, int dRow, int dCol,
-            PlayerType player) {
-        int r = row + dRow;
-        int c = col + dCol;
-
-        while (r >= 0 && r < cells.length && c >= 0 && c < cells[0].length) {
-            if (cells[r][c] != player) {
-                return false;
-            }
-            r += dRow;
-            c += dCol;
-        }
-
-        return true;
-    }
-
-    // Piece Differential in End Game
-    private static double calcPieceDifferentialScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
-        PlayerType[][] cells = view.getCells();
-        int totalPieces = 0;
-        int maxCount = 0;
-        int minCount = 0;
-
-        // Count pieces
-        for (int i = 0; i < cells.length; i++) {
-            for (int j = 0; j < cells[i].length; j++) {
-                if (cells[i][j] != null) {
-                    totalPieces++;
-                    if (cells[i][j] == maxPlayer) {
-                        maxCount++;
-                    } else if (cells[i][j] == minPlayer) {
-                        minCount++;
-                    }
-                }
-            }
-        }
-
-        // This heuristic becomes more important in endgame
-        if (totalPieces < 50)
-            return 0.0; // Not endgame yet
-
-        if (maxCount + minCount == 0)
-            return 0.0;
-
-        // In endgame, every piece counts heavily
-        double ratio = (double) (maxCount - minCount) / (maxCount + minCount);
-        double endgameWeight = Math.min(1.0, (totalPieces - 50) / 14.0);
-
-        return 0.3 * endgameWeight * ratio;
-    }
-
-    // Central Control Strategy - Control of central squares = more mobility +
-    // flexibility to win the game
-    private static double calcCentralControlScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
-        PlayerType[][] cells = view.getCells();
-        int maxCentralControl = 0;
-        int minCentralControl = 0;
-
-        // Central 4x4 area is extremely important so we better grab it.
-        for (int i = 2; i <= 5; i++) {
-            for (int j = 2; j <= 5; j++) {
-                PlayerType owner = cells[i][j];
-
-                if (owner == maxPlayer) {
-                    maxCentralControl++;
-                } else if (owner == minPlayer) {
-                    minCentralControl++;
-                }
-            }
-        }
-
-        if (maxCentralControl + minCentralControl == 0)
-            return 0.0;
-
-        double ratio = (double) (maxCentralControl - minCentralControl) / 16.0;
-        return 0.15 * ratio;
+        return 0.08 * ratio; // Slightly reduced weight since corners removed
     }
 
 }
