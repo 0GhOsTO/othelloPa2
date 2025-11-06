@@ -17,6 +17,11 @@ public class OthelloAgent
         extends TimedTreeSearchAgent {
 
     // Transposition table for memoization
+    // It allows me to check if there is already computed version
+    // The reason of using the concurrent hashmap is to make it thread safe
+    // Allow the multiple threads to access without making any issues.
+    // I just implemented this becaue just in case if I have to access the table
+    // multiple times concurrently.
     private final java.util.Map<String, Double> transpositionTable = new java.util.concurrent.ConcurrentHashMap<>();
 
     public static class OthelloNode
@@ -43,17 +48,16 @@ public class OthelloAgent
             PlayerType playerB = this.getOtherPlayerType();
             PlayerType minPlayer;
 
-            // If the player A is is max, then other one; vice versa. 
+            // If the player A is is max, then other one; vice versa.
             if (playerA == maxPlayer) {
                 minPlayer = playerB;
-            }
-            else {
+            } else {
                 minPlayer = playerA;
             }
 
             // get piece counts
             PlayerType[][] cells = view.getCells();
-            // # of things for the maxPlayer and minPlayer. 
+            // # of things for the maxPlayer and minPlayer.
             int maxScore = 0;
             int minScore = 0;
 
@@ -86,12 +90,12 @@ public class OthelloAgent
             PlayerType curPlayer = view.getCurrentPlayerType();
             PlayerType oPlayer = view.getOtherPlayerType();
 
-            // Legal moves from the current player. 
+            // Legal moves from the current player.
             java.util.Set<Coordinate> frontier = view.getFrontier(curPlayer);
 
             // Current player has the legal moves.
             if (!frontier.isEmpty()) {
-                // for the every move the frontier can make... 
+                // for the every move the frontier can make...
                 for (Coordinate move : frontier) {
                     // Build a temporary mutable Game from this view
                     Game g = new Game(view);
@@ -107,7 +111,7 @@ public class OthelloAgent
                     OthelloNode childNode = new OthelloNode(
                             this.getMaxPlayerType(),
                             childView,
-                            //Increment the depth. 
+                            // Increment the depth.
                             this.getDepth() + 1);
                     // Record what move led us here
                     childNode.setLastMove(move);
@@ -120,7 +124,7 @@ public class OthelloAgent
                 Game g = new Game(view);
                 // Increment turn number for the pass move
                 g.setTurnNumber(g.getTurnNumber() + 1);
-                // Do not apply the move and give turn to the another person. 
+                // Do not apply the move and give turn to the another person.
                 g.setCurrentPlayerType(oPlayer);
                 // Recompute what that other player will be allowed to do.
                 g.calculateFrontiers();
@@ -154,7 +158,7 @@ public class OthelloAgent
 
     @Override
     public OthelloNode makeRootNode(final GameView game) {
-        //Starting with the depth of 0
+        // Starting with the depth of 0
         return new OthelloNode(this.getMyPlayerType(), game, 0);
     }
 
@@ -169,11 +173,12 @@ public class OthelloAgent
         MinimaxResult result = minimax(n, maxDepth, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true);
         return result.bestNode;
     }
-    
+
+    // Calculating how deep we weant to go depends on the game phase.
     private int calculateSearchDepth(Node node) {
         GameView view = node.getGameView();
         PlayerType[][] cells = view.getCells();
-        
+
         // Count total pieces on board
         int pieceCount = 0;
         for (int i = 0; i < cells.length; i++) {
@@ -183,7 +188,7 @@ public class OthelloAgent
                 }
             }
         }
-        
+
         // Adaptive depth based on game phase
         if (pieceCount <= 10) {
             // During the early game, we search shallower but wider
@@ -196,25 +201,28 @@ public class OthelloAgent
             return 6;
         }
     }
-    
+
     // Helper class to return both utility and best node from minimax
     private static class MinimaxResult {
         public final double utility;
         public final Node bestNode;
+
         public MinimaxResult(double utility, Node bestNode) {
             this.utility = utility;
             this.bestNode = bestNode;
         }
     }
-    
+
     // generating the memoization key using the Stringbuilder
     // Saving keys in form of "boardState|depth|maximizingPlayer"
     private String getBoardHash(GameView view) {
         PlayerType[][] cells = view.getCells();
+        // much more efficient way to build the string
         StringBuilder sb = new StringBuilder();
         sb.append(view.getCurrentPlayerType().toString()).append("|");
         for (int i = 0; i < cells.length; i++) {
             for (int j = 0; j < cells[i].length; j++) {
+                // if the cell is empty,
                 if (cells[i][j] == null) {
                     sb.append("_");
                 } else {
@@ -224,7 +232,7 @@ public class OthelloAgent
         }
         return sb.toString();
     }
-    
+
     // Minimax with alpha-beta pruning and memoization
     private MinimaxResult minimax(Node node, int depth, double alpha, double beta, boolean maximizingPlayer) {
         // Generate memoization key
@@ -233,10 +241,10 @@ public class OthelloAgent
         // Check transposition table first if it contains the value or not
         if (transpositionTable.containsKey(memoKey)) {
             double cachedValue = transpositionTable.get(memoKey);
-            // if there is a key, return the cached value. 
+            // if there is a key, return the cached value.
             return new MinimaxResult(cachedValue, node);
         }
-        
+
         // Base case: terminal node or maximum depth reached
         if (node.isTerminal() || depth == 0) {
             double utility;
@@ -250,19 +258,20 @@ public class OthelloAgent
             transpositionTable.put(memoKey, utility);
             return new MinimaxResult(utility, node);
         }
-        
+
         // Recursive case: explore children
         List<Node> children = node.getChildren();
-        
+
         // If no children ( just in case juuuuust in case)
         if (children.isEmpty()) {
-            double utility = node.isTerminal() ? node.getTerminalUtility() : src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
+            double utility = node.isTerminal() ? node.getTerminalUtility()
+                    : src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
             return new MinimaxResult(utility, node);
         }
         // Order children for better alpha-beta pruning
         children = src.pas.othello.ordering.MoveOrderer.orderChildren(children);
         Node bestChild = children.get(0);
-        // if we are maximizing the player, 
+        // if we are maximizing the player,
         if (maximizingPlayer) {
             double maxEval = Double.NEGATIVE_INFINITY;
             // for the every child node ...
@@ -273,7 +282,7 @@ public class OthelloAgent
                     maxEval = eval.utility;
                     bestChild = child;
                 }
-                // alpha is the best value 
+                // alpha is the best value
                 alpha = Math.max(alpha, eval.utility);
                 if (beta <= alpha) {
                     break; // Beta is getting pruned
@@ -292,13 +301,13 @@ public class OthelloAgent
                     minEval = eval.utility;
                     bestChild = child;
                 }
-                
+
                 beta = Math.min(beta, eval.utility);
                 if (beta <= alpha) {
                     break; // Alpha cutoff
                 }
             }
-            
+
             // Store result in transposition table
             transpositionTable.put(memoKey, minEval);
             return new MinimaxResult(minEval, bestChild);
