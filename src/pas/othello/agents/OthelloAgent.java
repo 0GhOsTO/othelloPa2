@@ -39,23 +39,21 @@ public class OthelloAgent
 
             // max player type
             PlayerType maxPlayer = this.getMaxPlayerType();
-
             PlayerType playerA = this.getCurrentPlayerType();
             PlayerType playerB = this.getOtherPlayerType();
-
             PlayerType minPlayer;
 
-            // If pA IS the max player, then pB must be the other one,
+            // If the player A is is max, then other one; vice versa. 
             if (playerA == maxPlayer) {
                 minPlayer = playerB;
             }
-            // Otherwise pA is the other one,
             else {
                 minPlayer = playerA;
             }
 
             // get piece counts
             PlayerType[][] cells = view.getCells();
+            // # of things for the maxPlayer and minPlayer. 
             int maxScore = 0;
             int minScore = 0;
 
@@ -85,78 +83,58 @@ public class OthelloAgent
             List<Node> children = new ArrayList<>();
 
             Game.GameView view = this.getGameView();
+            PlayerType curPlayer = view.getCurrentPlayerType();
+            PlayerType oPlayer = view.getOtherPlayerType();
 
-            // Do not short-circuit here; we still need to generate a pass child
-            // when the current player has no legal moves. Terminal detection
-            // (both players with no legal moves) will be handled below.
+            // Legal moves from the current player. 
+            java.util.Set<Coordinate> frontier = view.getFrontier(curPlayer);
 
-            PlayerType currentPlayer = view.getCurrentPlayerType();
-            PlayerType otherPlayer = view.getOtherPlayerType();
-
-            // Frontier = set of legal moves for current player
-            java.util.Set<Coordinate> frontier = view.getFrontier(currentPlayer);
-
-            // CASE 1: current player HAS legal moves
+            // Current player has the legal moves.
             if (!frontier.isEmpty()) {
-
+                // for the every move the frontier can make... 
                 for (Coordinate move : frontier) {
                     // Build a temporary mutable Game from this view
                     Game g = new Game(view);
-
                     // Play that move on the Game
                     g.applyMove(move);
-
-                    // now the other player gets to go
-                    g.setCurrentPlayerType(otherPlayer);
-
+                    // turn change
+                    g.setCurrentPlayerType(oPlayer);
                     // recompute the frontiers for the other player
                     g.calculateFrontiers();
-
-                    // Get a fresh read-only snapshot for the child node
+                    // Get snapshot for the child node
                     Game.GameView childView = g.getView();
-
                     // Create the child node
                     OthelloNode childNode = new OthelloNode(
                             this.getMaxPlayerType(),
                             childView,
+                            //Increment the depth. 
                             this.getDepth() + 1);
-
                     // Record what move led us here
                     childNode.setLastMove(move);
-
                     // Add to the list of children
                     children.add(childNode);
                 }
-
             } else {
+                // Skippping my turn and passing to the enemy.
                 // the case where the current player has NO legal moves. Pass
                 Game g = new Game(view);
-
                 // Increment turn number for the pass move
                 g.setTurnNumber(g.getTurnNumber() + 1);
-
-                // Don't apply a move. Just hand the turn to the other player.
-                g.setCurrentPlayerType(otherPlayer);
-
+                // Do not apply the move and give turn to the another person. 
+                g.setCurrentPlayerType(oPlayer);
                 // Recompute what that other player will be allowed to do.
                 g.calculateFrontiers();
-
-                // Turn that updated Game back into a view for the child
+                // put the updated one as a child
                 Game.GameView passView = g.getView();
-
                 // Always create a pass node when current player has no moves
-                // The game termination logic should be handled elsewhere (isTerminal method)
                 OthelloNode passNode = new OthelloNode(
                         this.getMaxPlayerType(),
                         passView,
                         this.getDepth() + 1);
-
                 // No coordinate was placed because this was a pass
                 passNode.setLastMove(null);
-
                 children.add(passNode);
             }
-
             return children;
         }
     }
@@ -176,24 +154,19 @@ public class OthelloAgent
 
     @Override
     public OthelloNode makeRootNode(final GameView game) {
-        // if you change OthelloNode's constructor, you will want to change this!
-        // Note: I am starting the initial depth at 0 (because I like to count up)
-        // change this if you want to count depth differently
+        //Starting with the depth of 0
         return new OthelloNode(this.getMyPlayerType(), game, 0);
     }
 
     @Override
     public Node treeSearch(Node n) {
-        // Clear transposition table for new search (to prevent stale data)
+        // This is for the memoization table
         transpositionTable.clear();
-        
-        // Use minimax with alpha-beta pruning
-        // Adaptive depth based on game phase and available time
+        // Using minimax with alpha-beta pruning
+        // This is the maxDepth
         int maxDepth = calculateSearchDepth(n);
-        
-        // Start the minimax search with time tracking
-        long startTime = System.currentTimeMillis();
-        MinimaxResult result = minimax(n, maxDepth, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true, startTime);
+        // Kick off the minimax search
+        MinimaxResult result = minimax(n, maxDepth, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY, true);
         return result.bestNode;
     }
     
@@ -213,13 +186,13 @@ public class OthelloAgent
         
         // Adaptive depth based on game phase
         if (pieceCount <= 10) {
-            // Early game: fewer pieces, more branching factor, use shallow search
+            // During the early game, we search shallower but wider
             return 3;
         } else if (pieceCount <= 40) {
-            // Mid game: balanced approach
+            // During the middle of the game, we search more in depth
             return 4;
         } else {
-            // End game: fewer legal moves, can search deeper
+            // At last, find the one that can demolish the opponent.
             return 6;
         }
     }
@@ -228,19 +201,18 @@ public class OthelloAgent
     private static class MinimaxResult {
         public final double utility;
         public final Node bestNode;
-        
         public MinimaxResult(double utility, Node bestNode) {
             this.utility = utility;
             this.bestNode = bestNode;
         }
     }
     
-    // Generate a unique hash for the game state
+    // generating the memoization key using the Stringbuilder
+    // Saving keys in form of "boardState|depth|maximizingPlayer"
     private String getBoardHash(GameView view) {
         PlayerType[][] cells = view.getCells();
         StringBuilder sb = new StringBuilder();
         sb.append(view.getCurrentPlayerType().toString()).append("|");
-        
         for (int i = 0; i < cells.length; i++) {
             for (int j = 0; j < cells[i].length; j++) {
                 if (cells[i][j] == null) {
@@ -254,20 +226,14 @@ public class OthelloAgent
     }
     
     // Minimax with alpha-beta pruning and memoization
-    private MinimaxResult minimax(Node node, int depth, double alpha, double beta, boolean maximizingPlayer, long startTime) {
-        // Time cutoff to prevent infinite loops (80% of max thinking time)
-        long maxTime = (long)(this.getMaxThinkingTimeInMS() * 0.8);
-        if (System.currentTimeMillis() - startTime > maxTime) {
-            // Time cutoff reached, return heuristic evaluation
-            double utility = src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
-            return new MinimaxResult(utility, node);
-        }
+    private MinimaxResult minimax(Node node, int depth, double alpha, double beta, boolean maximizingPlayer) {
+        // Generate memoization key
         String boardHash = getBoardHash(node.getGameView());
         String memoKey = boardHash + "|" + depth + "|" + maximizingPlayer;
-        
-        // Check transposition table first
+        // Check transposition table first if it contains the value or not
         if (transpositionTable.containsKey(memoKey)) {
             double cachedValue = transpositionTable.get(memoKey);
+            // if there is a key, return the cached value. 
             return new MinimaxResult(cachedValue, node);
         }
         
@@ -280,52 +246,48 @@ public class OthelloAgent
                 // Use heuristic evaluation
                 utility = src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
             }
-            
-            // Store in transposition table
+            // Store the key value pair in transposition table
             transpositionTable.put(memoKey, utility);
             return new MinimaxResult(utility, node);
         }
         
+        // Recursive case: explore children
         List<Node> children = node.getChildren();
         
-        // If no children (shouldn't happen with proper getChildren implementation)
+        // If no children ( just in case juuuuust in case)
         if (children.isEmpty()) {
-            double utility = node.isTerminal() ? node.getTerminalUtility() 
-                : src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
+            double utility = node.isTerminal() ? node.getTerminalUtility() : src.pas.othello.heuristics.Heuristics.calculateHeuristicValue(node);
             return new MinimaxResult(utility, node);
         }
-        
         // Order children for better alpha-beta pruning
         children = src.pas.othello.ordering.MoveOrderer.orderChildren(children);
-        
         Node bestChild = children.get(0);
-        
+        // if we are maximizing the player, 
         if (maximizingPlayer) {
             double maxEval = Double.NEGATIVE_INFINITY;
-            
+            // for the every child node ...
             for (Node child : children) {
-                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, false, startTime);
-                
+                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, false);
+                // evaluate the utility and choose the best one.
                 if (eval.utility > maxEval) {
                     maxEval = eval.utility;
                     bestChild = child;
                 }
-                
+                // alpha is the best value 
                 alpha = Math.max(alpha, eval.utility);
                 if (beta <= alpha) {
-                    break; // Beta cutoff
+                    break; // Beta is getting pruned
                 }
             }
-            
-            // Store result in transposition table
+            // Caching result in transposition table
             transpositionTable.put(memoKey, maxEval);
             return new MinimaxResult(maxEval, bestChild);
         } else {
+            // minimizing the player to be in the POSITIVE_INFINITY
             double minEval = Double.POSITIVE_INFINITY;
-            
+            // Look out for the every child.
             for (Node child : children) {
-                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, true, startTime);
-                
+                MinimaxResult eval = minimax(child, depth - 1, alpha, beta, true);
                 if (eval.utility < minEval) {
                     minEval = eval.utility;
                     bestChild = child;
@@ -351,11 +313,9 @@ public class OthelloAgent
 
         // make the root node
         Node node = this.makeRootNode(game);
-
         // call tree search
         Node moveNode = this.treeSearch(node);
-
-        // return the move inside that node (null check to prevent NPE)
+        // return the move inside that node check if null
         return moveNode != null ? moveNode.getLastMove() : null;
     }
 
