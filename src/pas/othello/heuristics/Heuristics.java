@@ -12,46 +12,49 @@ import java.util.Set;
 
 public class Heuristics
         extends Object {
-
+    
+    // This function gives the board a score.
+    // It looks at corners, edges, number of moves, piece counts, then
+    // combines them into one value.
+    // The output is a a number between -1 and 1 (higher is better for the max player).
     public static double calculateHeuristicValue(Node node) {
         // TODO: complete me!
+
         GameView view = node.getGameView();
         PlayerType maxPlayer = node.getMaxPlayerType();
         PlayerType minPlayer = (maxPlayer == view.getCurrentPlayerType()) ? view.getOtherPlayerType()
                 : view.getCurrentPlayerType();
 
-        // Determine game phase for adaptive strategy
+        // Count total pieces on board
         int totalPieces = countTotalPieces(view.getCells());
         
-        // Corner Control (4 corners) - MOST IMPORTANT
-        // Taking corners that are 0,0, 0,7, 7,0, 7,7 is very important
+        // Taking a corner is very important in Othello
         double cornerScore = calcCornerScore(view, maxPlayer, minPlayer);
 
-        // Corner Adjacency Penalty; avoiding putting it next to the empty corner
+        // If you are adjacent to an empty corner, there is a penalty
         double cornerAdjacentPenalty = calcCornerAdjacentPenalty(view, maxPlayer, minPlayer);
 
-        // Edge Stability (Things at the edge can not be flipped)
-        // Pieces on the edge are unlikely to be flipped
+        // edge pieces are also valuable
         double edgeScore = calEdgeScore(view, maxPlayer, minPlayer);
 
-        // Mobility - Possible moves (# of possible moves vs me and opponent)
-        // More possible moves allows more options and flexibility
+        // Mobility: number of legal moves available
+        // More important in opening/midgame, less in endgame
         double mobilityScore = calcMobilityScore(view, maxPlayer, minPlayer, totalPieces);
 
-        // Early: prefer FEWER pieces (opponent has less mobility)
-        // Late: prefer MORE pieces (that's how you win!)
+        // the piece count matters different in different stages of the game.
+        // in the beginning, having fewer pieces is better.
+        // in the end, having more pieces is better.
         double pieceScore = calcAdaptivePieceScore(view, maxPlayer, minPlayer, totalPieces);
 
-        // Take a static point if the board is currently in good positions or in the bad positions. 
+        // this is a regular positiaonal score based on a weight matrix,
+        // does not include corners and edges.
         double positionalScore = calcPositionalScore(view, maxPlayer, minPlayer);
 
-        // Note: Stability is already captured by corner and edge scores
-        // Interior pieces are rarely truly stable in Othello
-
-        // Try to make the last move at the final stage. 
+        // Trying to make the last move towards the end of the game.
         double parityScore = calcParityScore(view, maxPlayer, totalPieces);
 
-        // Potential Mobility; square adjacent to next place. 
+        // the number of empty squares to your pieces
+        // checking the future mobility potential.
         double potentialMobilityScore = calcPotentialMobilityScore(view, maxPlayer, minPlayer, totalPieces);
 
         // We need to weight it differently based on game phase
@@ -77,6 +80,7 @@ public class Heuristics
         return count;
     }
 
+    // Adaptive piece score based on game phase
     private static double calcAdaptivePieceScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer, int totalPieces) {
         PlayerType[][] cells = view.getCells();
         int maxCnt = 0;
@@ -116,7 +120,7 @@ public class Heuristics
         return weight * ratio;
     }
 
-    //If you are adjacent to the empty corner, you are in trouble since opponent will flip you and you will not be able to revert it. 
+    // Penalty for having pieces adjacent to empty corners
     private static double calcCornerAdjacentPenalty(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
         PlayerType[][] cells = view.getCells();
         int boardSize = cells.length;
@@ -157,11 +161,13 @@ public class Heuristics
             }
         }
         
-        // Return negative of penalty difference (we want to AVOID penalties)
+        // Return negative penalty (BAD SQUARE)
         return -(maxPenalty - minPenalty);
     }
 
+    // Mobility calculation
     private static double calcMobilityScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer, int totalPieces) {
+        
         // Get number of legal moves for each player
         Set<Coordinate> maxMoves = view.getFrontier(maxPlayer);
         Set<Coordinate> minMoves = view.getFrontier(minPlayer);
@@ -185,6 +191,7 @@ public class Heuristics
             weight = 0.05; // Less important in endgame
         }
         
+        // Return weighted mobility score
         return weight * ratio;
     }
 
@@ -204,7 +211,7 @@ public class Heuristics
         boolean maxPlayerToMove = (currentPlayer == maxPlayer);
         
         if (emptySquares % 2 == 1) {
-            // Odd squares: player to move now gets last move
+            // Odd squares: current player gets last move
             return maxPlayerToMove ? 0.02 : -0.02;
         } else {
             // Even squares: opponent gets last move
@@ -258,6 +265,7 @@ public class Heuristics
         return 0.08 * ratio;
     }
 
+    // Corner score calculation
     private static double calcCornerScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
         PlayerType[][] cells = view.getCells();
         int maxCorners = 0;
@@ -287,13 +295,14 @@ public class Heuristics
         return 0.4 * ratio; // High weight for corners
     }
 
+    // Edge score calculation
     private static double calEdgeScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
         PlayerType[][] cells = view.getCells();
         int maxEdges = 0;
         int minEdges = 0;
         int boardSize = cells.length;
 
-        // Count pieces on edges (but not corners, as they're counted separately)
+        // Count pieces on edges (but not corners)
         for (int i = 0; i < boardSize; i++) {
             for (int j = 0; j < boardSize; j++) {
                 // Skip corners (already counted in corner score)
@@ -314,7 +323,7 @@ public class Heuristics
             }
         }
 
-        // Edge pieces are stable and valuable
+        // Edges are valuable, but less than corners
         int totalEdgeSpots = 4 * (boardSize - 2); // Total edge spots minus corners
         if (maxEdges + minEdges == 0) {
             return 0.0;
@@ -324,24 +333,26 @@ public class Heuristics
         return 0.2 * ratio;
     }
 
+    // Positional score calculation using weight matrix
     private static double calcPositionalScore(GameView view, PlayerType maxPlayer, PlayerType minPlayer) {
         PlayerType[][] cells = view.getCells();
         int maxPositionalScore = 0;
         int minPositionalScore = 0;
 
         // Position weights matrix (higher is better)
-        // Focus on interior and near-edge positions, corners/edges handled separately
+        // Corners are excluded here (counted separately)
         int[][] weights = {
-                { 0, -20, 10, 5, 5, 10, -20, 0 },      // Set corners to 0 (counted elsewhere)
+                { 0, -20, 10, 5, 5, 10, -20, 0 },      
                 { -20, -40, -5, -5, -5, -5, -40, -20 },
                 { 10, -5, 5, 1, 1, 5, -5, 10 },
                 { 5, -5, 1, 1, 1, 1, -5, 5 },
                 { 5, -5, 1, 1, 1, 1, -5, 5 },
                 { 10, -5, 5, 1, 1, 5, -5, 10 },
                 { -20, -40, -5, -5, -5, -5, -40, -20 },
-                { 0, -20, 10, 5, 5, 10, -20, 0 }       // Set corners to 0 (counted elsewhere)
+                { 0, -20, 10, 5, 5, 10, -20, 0 }
         };
 
+        // Calculate positional scores
         for (int i = 0; i < cells.length; i++) {
             for (int j = 0; j < cells[i].length; j++) {
                 PlayerType owner = cells[i][j];

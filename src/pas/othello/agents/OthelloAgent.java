@@ -42,7 +42,6 @@ public class OthelloAgent
                 return 0d;
             }
 
-            // max player type
             PlayerType maxPlayer = this.getMaxPlayerType();
             PlayerType playerA = this.getCurrentPlayerType();
             PlayerType playerB = this.getOtherPlayerType();
@@ -57,6 +56,7 @@ public class OthelloAgent
 
             // get piece counts
             PlayerType[][] cells = view.getCells();
+
             // # of things for the maxPlayer and minPlayer.
             int maxScore = 0;
             int minScore = 0;
@@ -83,6 +83,8 @@ public class OthelloAgent
         }
 
         @Override
+        // Generate child nodes based on legal moves
+        // If no legal moves, generate a pass node
         public List<Node> getChildren() {
             List<Node> children = new ArrayList<>();
 

@@ -24,22 +24,20 @@ public class MoveOrderer
         // Create a copy of the list to avoid modifying the original
         List<Node> orderedChildren = new java.util.ArrayList<>(children);
         
-        // Sort children by heuristic value (best moves first for pruning efficiency)
-        // For MAX player perspective, we want higher values first
-        // For MIN player perspective, we want lower values first
+        // Sort the children based on their heuristic values
+        // for MAX levels, sort descending, and for MIN levels, sort ascending
         orderedChildren.sort((node1, node2) -> {
             double value1 = getNodeValue(node1);
             double value2 = getNodeValue(node2);
             
             // Determine if we're at a MAX or MIN level
-            // We can infer this from comparing current player with max player
             boolean isMaxLevel = isMaximizingLevel(node1);
             
             if (isMaxLevel) {
-                // MAX level: sort in descending order (best moves first)
+                // MAX level so best moves first
                 return Double.compare(value2, value1);
             } else {
-                // MIN level: sort in ascending order (worst moves for MAX first)
+                // MIN level so worst moves first
                 return Double.compare(value1, value2);
             }
         });
